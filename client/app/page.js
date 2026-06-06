@@ -90,17 +90,17 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
 
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Lead Management CRM</h1>
-            <p className="text-gray-500 text-sm mt-1">Manage and track your sales leads</p>
+            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Lead Management</h1>
+            <p className="text-gray-500 text-sm mt-1">Track and manage your sales pipeline</p>
           </div>
           <button
             onClick={() => { setEditLead(null); setModalOpen(true); }}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"
           >
             <Plus size={16} />
             Add Lead
@@ -109,16 +109,16 @@ export default function Home() {
 
         <StatsBar stats={stats} />
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
           <div className="flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search by name, email or company..."
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50"
               />
             </div>
             <div className="flex gap-2 flex-wrap">
@@ -126,10 +126,10 @@ export default function Home() {
                 <button
                   key={s}
                   onClick={() => { setStatusFilter(s); setPage(1); }}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
                     statusFilter === s
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
                   }`}
                 >
                   {s}
@@ -138,28 +138,30 @@ export default function Home() {
             </div>
             <button
               onClick={() => { fetchLeads(); fetchStats(); }}
-              className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-600"
+              className="p-2.5 border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 transition-colors"
             >
               <RefreshCw size={16} />
             </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="text-center py-10 text-gray-400">Loading leads...</div>
-        ) : (
-          <LeadTable
-            leads={leads}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            sortBy={sortBy}
-            sortOrder={sortOrder}
-            onSort={handleSort}
-            page={page}
-            totalPages={totalPages}
-            onPageChange={setPage}
-          />
-        )}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          {loading ? (
+            <div className="text-center py-16 text-gray-400 text-sm">Loading leads...</div>
+          ) : (
+            <LeadTable
+              leads={leads}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={handleSort}
+              page={page}
+              totalPages={totalPages}
+              onPageChange={setPage}
+            />
+          )}
+        </div>
       </div>
 
       <LeadModal

@@ -72,5 +72,5 @@ Frontend runs on http://localhost:3000
 
 ## Live Demo
 
-- Frontend: (Vercel URL here)
-- Backend: (Render URL here)
+- Frontend: https://lead-crm-six-beta.vercel.app
+- Backend: https://lead-crm-api.onrender.com
