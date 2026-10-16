@@ -9,6 +9,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       ...(url ? { DATABASE_URL: url } : {}),
       JWT_SECRET: 'test-secret-test-secret-test-secret',
+      HOME_PLACE_OF_SUPPLY: 'KL',
       UPLOAD_DIR: './.test-uploads',
       // Enables the app-side Zoho code paths; the tests inject a fake API instead of the real client.
       ZOHO_REFRESH_TOKEN: 'x', ZOHO_CLIENT_ID: 'x', ZOHO_ORG_ID: '1',

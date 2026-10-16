@@ -1,5 +1,7 @@
 import { config } from '../config.js';
 
+const apiBase = () => (config.ZOHO_PRODUCT === 'pos' ? `${config.ZOHO_POS_API_URL}/inventory/v1` : config.ZOHO_BOOKS_API_URL);
+
 export class ZohoError extends Error {
   constructor(message: string, public status: number, public zohoCode?: number, public retryable = false) {
     super(message);
@@ -12,7 +14,7 @@ export interface ZohoApi {
   listContacts(type: 'customer' | 'vendor', page: number): Promise<{ rows: any[]; hasMore: boolean }>;
   listItems(page: number): Promise<{ rows: any[]; hasMore: boolean }>;
   getItem(id: string): Promise<any>;
-  updateItemCustomFields(id: string, fields: { customfield_id: string; value: unknown }[]): Promise<void>;
+  updateItemCustomFields(id: string, fields: object[]): Promise<void>;
   findInvoiceByReference(ref: string): Promise<any | null>;
   createInvoice(payload: object): Promise<any>;
   getInvoice(id: string): Promise<any>;
@@ -21,7 +23,8 @@ export interface ZohoApi {
   getBill(id: string): Promise<any>;
 }
 
-export class ZohoBooksClient implements ZohoApi {
+/** Zoho REST client for Books or POS (same resource names; different host, prefix and a few list filters). */
+export class ZohoClient implements ZohoApi {
   private token: { value: string; expires: number } | null = null;
 
   private async accessToken(force = false): Promise<string> {
@@ -39,7 +42,7 @@ export class ZohoBooksClient implements ZohoApi {
   }
 
   private async req(method: string, path: string, opts: { query?: Record<string, string | number>; body?: object } = {}, retry = true): Promise<any> {
-    const url = new URL(config.ZOHO_BOOKS_API_URL + path);
+    const url = new URL(apiBase() + path);
     url.searchParams.set('organization_id', config.ZOHO_ORG_ID);
     for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, String(v));
     const res = await fetch(url, {
@@ -57,15 +60,18 @@ export class ZohoBooksClient implements ZohoApi {
 
   async listTaxes() { return (await this.req('GET', '/settings/taxes')).taxes ?? []; }
   async listContacts(type: 'customer' | 'vendor', page: number) {
-    const j = await this.req('GET', '/contacts', { query: { contact_type: type, page, per_page: 200 } });
-    return { rows: j.contacts ?? [], hasMore: Boolean(j.page_context?.has_more_page) };
+    // Books filters by contact_type. POS documents no such filter, so it returns both and we pick by each row's contact_type.
+    const pos = config.ZOHO_PRODUCT === 'pos';
+    const j = await this.req('GET', '/contacts', { query: pos ? { filter_by: 'Status.All', page, per_page: 200 } : { contact_type: type, page, per_page: 200 } });
+    const rows: any[] = j.contacts ?? [];
+    return { rows: pos ? rows.filter((r) => !r.contact_type || r.contact_type === type) : rows, hasMore: Boolean(j.page_context?.has_more_page) };
   }
   async listItems(page: number) {
-    const j = await this.req('GET', '/items', { query: { page, per_page: 200 } });
+    const j = await this.req('GET', '/items', { query: { page, per_page: 200, ...(config.ZOHO_PRODUCT === 'pos' ? { filter_by: 'Status.All' } : {}) } });
     return { rows: j.items ?? [], hasMore: Boolean(j.page_context?.has_more_page) };
   }
   async getItem(id: string) { return (await this.req('GET', `/items/${id}`)).item; }
-  async updateItemCustomFields(id: string, fields: { customfield_id: string; value: unknown }[]) {
+  async updateItemCustomFields(id: string, fields: object[]) {
     await this.req('PUT', `/items/${id}`, { body: { custom_fields: fields } });
   }
   async findInvoiceByReference(ref: string) {
@@ -81,3 +87,6 @@ export class ZohoBooksClient implements ZohoApi {
   async createBill(payload: object) { return (await this.req('POST', '/bills', { body: payload })).bill; }
   async getBill(id: string) { return (await this.req('GET', `/bills/${id}`)).bill; }
 }
+
+/** Back-compat name used by older imports. */
+export const ZohoBooksClient = ZohoClient;

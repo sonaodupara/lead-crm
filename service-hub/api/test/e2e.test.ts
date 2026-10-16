@@ -348,7 +348,9 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
 
   it('pulls taxes, contacts and items from Zoho, turning warranty custom fields into terms; re-pull is idempotent', async () => {
     const api = Object.assign(new FakeZoho(), {
-      listTaxes: async () => [{ tax_id: 'ZT9', tax_name: 'Zoho tax A', tax_percentage: 12, tax_type: 'tax' }, { tax_id: 'ZT8', tax_name: 'Old tax', tax_percentage: 5, is_inactive: true }],
+      listTaxes: async () => [{ tax_id: 'ZT9', tax_name: 'Zoho tax A', tax_percentage: 12, tax_type: 'tax' }, { tax_id: 'ZT8', tax_name: 'Old tax', tax_percentage: 5, is_inactive: true },
+        { tax_id: 'ZG18', tax_name: 'GST18', tax_percentage: 18, tax_type: 'tax_group', tax_specification: 'intra' },
+        { tax_id: 'ZI18', tax_name: 'IGST18', tax_percentage: 18, tax_type: 'tax', tax_specification: 'inter', tax_specific_type: 'igst' }],
       listContacts: async (type: string) => ({ rows: [{ contact_id: `${type}-1`, contact_name: `Zoho ${type}`, mobile: '9111111111', gst_treatment: 'business_gst', place_of_contact: 'KL' }], hasMore: false }),
       listItems: async () => ({ hasMore: false, rows: [
         { item_id: 'ZI-A', sku: 'ZA', name: 'Zoho Item A', rate: 500, tax_id: 'ZT9', hsn_or_sac: '8501', product_type: 'goods', track_serial_number: true,
@@ -356,17 +358,21 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
         { item_id: 'ZI-B', sku: 'ZB', name: 'Zoho Service', rate: 300, product_type: 'service', custom_field_hash: { cf_warranty_template: 'T12' } },
         { item_id: 'ZI-SEAL', sku: 'SEAL', name: 'Seal kit (conflicting SKU)', rate: 110, status: 'active' },   // SKU already belongs to another linked item
         { item_id: 'ZI-ADOPT', sku: 'adopt-me', name: 'Adopted from Zoho', rate: 75 },                          // matches an unlinked app item by SKU (case-insensitive)
+        // shaped like a Zoho POS item: empty SKU, no top-level tax_id, separate GST/IGST preferences, inactive status
+        { item_id: 'ZI-POS', sku: '', part_number: 'PN-77', name: 'POS style item', rate: 2880, tax_id: '', status: 'inactive', product_type: 'goods', hsn_or_sac: '90283010',
+          track_inventory: true, track_serial_number: false, track_batch_number: false,
+          item_tax_preferences: [{ tax_specification: 'inter', tax_id: 'ZI18', tax_percentage: 18 }, { tax_specification: 'intra', tax_id: 'ZG18', tax_percentage: 18 }] },
       ] }),
     });
-    expect(await pullTaxes(api)).toBe(2);
+    expect(await pullTaxes(api)).toBe(4);
     expect(await pullContacts(api, 'customer')).toBe(1);
     expect(await pullContacts(api, 'vendor')).toBe(1);
     await pool.query(`insert into items (sku,name,track_mode,rate) values ('ADOPT-ME','Local item','batch',1)`);
     const skipped: string[] = [];
-    expect(await pullItems(api, pool, skipped)).toBe(3);   // one bad record does not stop the others
+    expect(await pullItems(api, pool, skipped)).toBe(4);   // one bad record does not stop the others
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toMatch(/Seal kit \(conflicting SKU\).*SEAL/);
-    expect(await pullItems(api, pool, [])).toBe(3);        // re-pull changes nothing
+    expect(await pullItems(api, pool, [])).toBe(4);        // re-pull changes nothing
 
     const q = async (sql: string, p: any[] = []) => (await pool.query(sql, p)).rows;
     expect((await q(`select percentage, active from tax_rates where zoho_tax_id='ZT9'`))[0]).toEqual({ percentage: 12, active: true });
@@ -378,12 +384,32 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     expect((await q(`select count(*)::int n from warranty_templates where code like 'ZOHO-%'`))[0].n).toBe(1); // not duplicated on re-pull
     const b = (await q(`select t.code, i.is_service from items i join warranty_templates t on t.id=i.warranty_template_id where i.zoho_item_id='ZI-B'`))[0];
     expect(b).toEqual({ code: 'T12', is_service: true }); // matched the existing template by code
+    const pos = (await q(`select i.sku, i.active, i.zoho_tax_intra, i.zoho_tax_inter, tx.name as preview_tax, tx.percentage from items i left join tax_rates tx on tx.id=i.tax_id where i.zoho_item_id='ZI-POS'`))[0];
+    expect(pos).toEqual({ sku: 'PN-77', active: false, zoho_tax_intra: 'ZG18', zoho_tax_inter: 'ZI18', preview_tax: 'GST18', percentage: 18 });
+    expect((await q(`select tax_specification from tax_rates where zoho_tax_id='ZI18'`))[0].tax_specification).toBe('inter');
     // an unlinked app item with the same SKU is adopted (not duplicated) and keeps its local tracking mode
     const adopted = await q(`select zoho_item_id, rate, track_mode from items where lower(sku)='adopt-me'`);
     expect(adopted).toHaveLength(1);
     expect(adopted[0]).toMatchObject({ zoho_item_id: 'ZI-ADOPT', rate: 75, track_mode: 'batch' });
     // the conflicting record left the existing linked item untouched
     expect((await q(`select zoho_item_id, rate from items where sku='SEAL'`))[0]).toEqual({ zoho_item_id: 'Z-SEAL', rate: 100 });
+  });
+
+  it('pushes the IGST tax for other-state customers and the GST tax for same-state ones (Zoho POS items carry both)', async () => {
+    await pool.query(`update items set zoho_tax_intra='G18', zoho_tax_inter='I18' where sku='SEAL'`);
+    const other = (await ok('POST', '/api/customers', tok.accountant, { name: 'Chennai Traders', place_of_supply: 'TN' })).id;
+    const same = (await ok('POST', '/api/customers', tok.accountant, { name: 'Kochi Traders', place_of_supply: 'KL' })).id;
+    await pool.query(`update customers set zoho_contact_id = 'ZC-' || id::text where id = any($1::uuid[])`, [[other, same]]);
+    const push = async (customer_id: string, place_of_supply: string) => {
+      const inv = await ok('POST', '/api/invoices', tok.accountant, { customer_id, invoice_date: today(), place_of_supply, lines: [{ item_id: ids.seal, qty: 1, rate: 100 }] });
+      await ok('POST', `/api/invoices/${inv.id}/confirm`, tok.accountant);
+      const number = (await ok('GET', `/api/invoices/${inv.id}`, tok.accountant)).number;
+      expect((await processOutbox(zoho)).failed).toBe(0);
+      const sent = zoho.invoices.find((i) => i.reference_number === number);   // older pending invoices are pushed first
+      return sent.line_items[0].tax_id;
+    };
+    expect(await push(other, 'TN')).toBe('I18');
+    expect(await push(same, 'KL')).toBe('G18');
   });
 
   it('dashboard and reports respond', async () => {

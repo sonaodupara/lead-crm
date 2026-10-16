@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBillPayload, buildInvoicePayload, MappingError, parseCustomFieldIds, warrantyFromZohoItem } from '../src/zoho/mapper.js';
+import { buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax, warrantyFromZohoItem } from '../src/zoho/mapper.js';
 
 const ids = { 'invoice.cf_warranty_start': 'F1', 'invoice.cf_warranty_terms': 'F2', 'invoice.cf_app_ref': 'F4' };
 const base = {
@@ -66,5 +66,32 @@ describe('warranty fields on Zoho items', () => {
     expect(parseCustomFieldIds('{"a.b":"1"}')).toEqual({ 'a.b': '1' });
     expect(parseCustomFieldIds('not json')).toEqual({});
     expect(parseCustomFieldIds('')).toEqual({});
+  });
+});
+
+describe('Zoho POS specifics', () => {
+  it('picks GST (intra) or IGST (inter) by place of supply, case-insensitively', () => {
+    const t = { intra: 'GST18', inter: 'IGST18', fallback: 'LINE' };
+    expect(pickZohoTax(t, 'KL', 'KL')).toBe('GST18');
+    expect(pickZohoTax(t, 'kl', 'KL')).toBe('GST18');
+    expect(pickZohoTax(t, 'TN', 'KL')).toBe('IGST18');
+    expect(pickZohoTax(t, null, 'KL')).toBe('GST18');       // no place of supply on the invoice: treat as same state
+    expect(pickZohoTax(t, 'TN', '')).toBe('GST18');         // our own state not configured: cannot tell, keep intra
+    expect(pickZohoTax({ fallback: 'LINE' }, 'TN', 'KL')).toBe('LINE');   // item has no per-state taxes (Books-style)
+    expect(pickZohoTax({ intra: 'GST18' }, 'TN', 'KL')).toBe('GST18');
+    expect(pickZohoTax({}, 'TN', 'KL')).toBeNull();
+  });
+  it('writes POS custom fields by slot index and label, Books fields by id, and keeps 0', () => {
+    const ids = { 'invoice.cf_warranty_start': { index: 1, label: 'Warranty Start' }, 'invoice.cf_app_ref': 'BOOKS-ID', 'item.cf_warranty_parts_months': { index: 2, label: 'Parts Months' } };
+    expect(customFields(ids, 'invoice', { cf_warranty_start: '2026-10-16', cf_app_ref: 'INV-1', cf_unmapped: 'x' })).toEqual([
+      { index: 1, label: 'Warranty Start', value: '2026-10-16', show_on_pdf: true }, { customfield_id: 'BOOKS-ID', value: 'INV-1' }]);
+    expect(customFields(ids, 'item', { cf_warranty_parts_months: 0 })).toEqual([{ index: 2, label: 'Parts Months', value: '0', show_on_pdf: true }]);
+  });
+  it('POS bills always carry a due date (required by POS); Books bills only when given', () => {
+    const bill = { bill: { number: 'B1', vendor_bill_no: null, bill_date: '2026-10-01', due_date: null, place_of_supply: null, gst_treatment: null, notes: null },
+      vendor: { name: 'V', zoho_contact_id: 'V1' }, lines: [{ item_name: 'X', zoho_item_id: 'I', description: null, qty: 1, rate: 1, zoho_tax_id: null }] };
+    expect((buildBillPayload(bill, {}, { pos: true }) as any).due_date).toBe('2026-10-01');
+    expect((buildBillPayload({ ...bill, bill: { ...bill.bill, due_date: '2026-11-01' } }, {}, { pos: true }) as any).due_date).toBe('2026-11-01');
+    expect(Object.keys(buildBillPayload(bill, {}))).not.toContain('due_date');
   });
 });

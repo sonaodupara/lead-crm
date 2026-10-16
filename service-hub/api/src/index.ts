@@ -2,13 +2,13 @@ import { config, zohoEnabled } from './config.js';
 import { pool } from './db.js';
 import { migrate } from './migrate.js';
 import { buildApp } from './server.js';
-import { ZohoBooksClient } from './zoho/client.js';
+import { ZohoClient } from './zoho/client.js';
 import { runSyncCycle } from './zoho/sync.js';
 import { generateDueVisitJobs } from './lib/amcService.js';
 import { tx } from './db.js';
 
 await migrate();
-const api = zohoEnabled ? new ZohoBooksClient() : null;
+const api = zohoEnabled ? new ZohoClient() : null;
 const app = await buildApp({ zoho: api });
 
 if (api) {
@@ -18,7 +18,7 @@ if (api) {
     running = true;
     try { await runSyncCycle(api); } catch (e) { app.log.error(e, 'zoho sync cycle failed'); } finally { running = false; }
   }, config.ZOHO_SYNC_INTERVAL_SEC * 1000);
-  app.log.info('Zoho sync enabled');
+  app.log.info(`Zoho sync enabled (${config.ZOHO_PRODUCT})`);
 } else {
   app.log.warn('Zoho sync is OFF (no credentials) — documents will stay "not synced"');
 }

@@ -3,7 +3,7 @@
 ```
  phones / desktops ──HTTPS──▶ Caddy ──▶ Fastify API + built React app ──▶ PostgreSQL
                                               │
-                                              └── outbox worker ──▶ Zoho Books (India DC)
+                                              └── outbox worker ──▶ Zoho POS (or Books), India DC
 ```
 
 * **web/** React + Vite. One build, two experiences: a phone-first technician app (offline queue, camera,

@@ -4,19 +4,42 @@
  * the organisation's own tax setup, and Zoho calculates the final amounts.
  */
 
-export type CustomFieldIds = Record<string, string>; // 'invoice.cf_warranty_start' -> Zoho customfield_id
+/**
+ * 'invoice.cf_warranty_start' -> how Zoho identifies the field.
+ *  - Books: the customfield_id string.
+ *  - POS:   the field's slot and label, {"index": 1, "label": "Warranty Start"}.
+ */
+export type CustomFieldIds = Record<string, string | { index: number; label: string }>;
 
 export function parseCustomFieldIds(raw: string): CustomFieldIds {
-  try { return JSON.parse(raw || '{}'); } catch { return {}; }
+  try { const v = JSON.parse(raw || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
 }
 
-function customFields(ids: CustomFieldIds, entity: string, values: Record<string, unknown>) {
-  const out: { customfield_id: string; value: unknown }[] = [];
+export function customFields(ids: CustomFieldIds, entity: string, values: Record<string, unknown>) {
+  const out: object[] = [];
   for (const [name, value] of Object.entries(values)) {
-    const id = ids[`${entity}.${name}`];
-    if (id && value !== undefined && value !== null && value !== '') out.push({ customfield_id: id, value });
+    const ref = ids[`${entity}.${name}`];
+    if (!ref || value === undefined || value === null || value === '') continue;
+    out.push(typeof ref === 'string'
+      ? { customfield_id: ref, value }
+      : { index: ref.index, label: ref.label, value: String(value), show_on_pdf: true });
   }
   return out;
+}
+
+/**
+ * Which Zoho tax record a line should carry. POS keeps a GST tax group (same state) and an IGST tax (other state)
+ * per item; a sale to a different place of supply than our own uses the IGST one.
+ */
+export function pickZohoTax(
+  t: { intra?: string | null; inter?: string | null; fallback?: string | null },
+  placeOfSupply: string | null | undefined,
+  home: string | null | undefined,
+): string | null {
+  const norm = (s?: string | null) => (s ?? '').trim().toUpperCase();
+  const other = norm(placeOfSupply) && norm(home) && norm(placeOfSupply) !== norm(home);
+  if (t.intra && t.inter) return other ? t.inter : t.intra;
+  return t.inter && other ? t.inter : t.intra ?? t.inter ?? t.fallback ?? null;
 }
 
 export class MappingError extends Error {} // non-retryable: needs a human to fix the data
@@ -67,7 +90,8 @@ export interface BillSync {
   lines: { item_name: string; zoho_item_id: string | null; description: string | null; qty: number; rate: number; zoho_tax_id: string | null }[];
 }
 
-export function buildBillPayload(s: BillSync, ids: CustomFieldIds) {
+/** `pos: true` adds what Zoho POS requires on a bill (a due date). */
+export function buildBillPayload(s: BillSync, ids: CustomFieldIds, opts: { pos?: boolean } = {}) {
   if (!s.vendor.zoho_contact_id) throw new MappingError(`Vendor "${s.vendor.name}" is not linked to a Zoho contact — sync contacts or link it first`);
   for (const l of s.lines) if (!l.zoho_item_id) throw new MappingError(`Item "${l.item_name}" is not linked to a Zoho item`);
   return {
@@ -75,7 +99,7 @@ export function buildBillPayload(s: BillSync, ids: CustomFieldIds) {
     bill_number: s.bill.vendor_bill_no || s.bill.number,
     reference_number: s.bill.number,
     date: s.bill.bill_date,
-    ...(s.bill.due_date ? { due_date: s.bill.due_date } : {}),
+    ...(s.bill.due_date || opts.pos ? { due_date: s.bill.due_date ?? s.bill.bill_date } : {}),
     ...(s.bill.gst_treatment ? { gst_treatment: s.bill.gst_treatment } : {}),
     ...(s.bill.place_of_supply ? { source_of_supply: s.bill.place_of_supply } : {}),
     ...(s.bill.notes ? { notes: s.bill.notes } : {}),

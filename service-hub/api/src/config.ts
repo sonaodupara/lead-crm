@@ -18,7 +18,12 @@ const schema = z.object({
   ZOHO_CLIENT_SECRET: z.string().default(''),
   ZOHO_REFRESH_TOKEN: z.string().default(''),
   ZOHO_ORG_ID: z.string().default(''),
+  // 'pos' = Zoho POS (Zakya) API, 'books' = Zoho Books API. POS paths are /inventory/v1/... on the Zakya host.
+  ZOHO_PRODUCT: z.enum(['pos', 'books']).default('pos'),
+  ZOHO_POS_API_URL: z.string().default('https://api.zakya.in'),
   ZOHO_BOOKS_API_URL: z.string().default('https://www.zohoapis.in/books/v3'),
+  // The organisation's own state code as Zoho writes it (e.g. KL). Sales to a different place of supply use IGST.
+  HOME_PLACE_OF_SUPPLY: z.string().default(''),
   // JSON map of app field -> Zoho custom field id, filled in after the
   // fields are created in Zoho (docs/ZOHO.md).
   ZOHO_CUSTOM_FIELD_IDS: z.string().default('{}'),
