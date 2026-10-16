@@ -67,6 +67,7 @@ export async function templateFromZoho(c: Queryable, w: ZohoItemWarranty): Promi
   return r.rows[0].id;
 }
 
+const DETAIL_BATCH = 50;
 const hasCustomFields = (z: any) => Boolean(z.custom_field_hash || z.custom_fields?.length);
 
 /** Zoho writes offsets like +0530; make that parseable, then compare with when we last synced the item. */
@@ -83,6 +84,20 @@ export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: stri
   let page = 1, n = 0;
   for (;;) {
     const { rows, hasMore } = await api.listItems(page++);
+    // Zoho's item list leaves out custom fields. When warranty fields are configured, read the full records in bulk,
+    // but only for items that are new or changed since we last saw them, to keep API calls low.
+    const synced = new Map<string, Date | null>();
+    if (fieldsConfigured && rows.length)
+      (await c.query('select zoho_item_id, synced_at from items where zoho_item_id = any($1::text[])', [rows.map((r) => r.item_id)]))
+        .rows.forEach((r) => synced.set(r.zoho_item_id, r.synced_at));
+    const needDetail = fieldsConfigured
+      ? rows.filter((z) => !hasCustomFields(z) && changedSince(synced.get(z.item_id), z.last_modified_time)).map((z) => z.item_id as string)
+      : [];
+    const details = new Map<string, any>();
+    for (let i = 0; i < needDetail.length; i += DETAIL_BATCH) {
+      try { (await api.getItems(needDetail.slice(i, i + DETAIL_BATCH))).forEach((d) => details.set(d.item_id, d)); }
+      catch (e: any) { skipped.push(`${needDetail.slice(i, i + DETAIL_BATCH).length} item(s): could not read warranty fields (${e.message})`); }
+    }
     for (const z of rows) {
       try {
       // POS items often have no SKU; fall back to the part number, then Zoho's own id so the record is still unique.
@@ -90,15 +105,10 @@ export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: stri
       const existing = (await c.query(
         `select id, synced_at from items where zoho_item_id=$1 or (zoho_item_id is null and lower(sku)=lower($2)) limit 1`,
         [z.item_id, sku])).rows[0];
-      // Zoho's item *list* leaves out custom fields. When warranty fields are configured, read the item's own record,
-      // but only for items that are new or changed since we last saw them, to keep API calls low.
-      let detail = z;
-      if (fieldsConfigured && !hasCustomFields(z) && changedSince(existing?.synced_at, z.last_modified_time)) {
-        try { detail = (await api.getItem(z.item_id)) ?? z; } catch (e: any) { skipped.push(`item "${z.name}": could not read warranty fields (${e.message})`); }
-      }
+      const detail = details.get(z.item_id) ?? z;
       const warranty = warrantyFromZohoItem(detail);
       const tplId = warranty ? await templateFromZoho(c, warranty) : null;
-      const track = z.track_serial_number ? 'serial' : z.track_batch_number ? 'batch' : 'none';
+      const track = (detail.track_serial_number ?? z.track_serial_number) ? 'serial' : (detail.track_batch_number ?? z.track_batch_number) ? 'batch' : 'none';
       // Zoho POS gives each item a GST (intra-state) and an IGST (inter-state) tax; Books gives one tax_id.
       const prefs: any[] = z.item_tax_preferences ?? [];
       const intra: string | null = prefs.find((p) => p.tax_specification === 'intra')?.tax_id ?? z.tax_id ?? null;

@@ -18,6 +18,7 @@ class FakeZoho implements ZohoApi {
   async listContacts() { return { rows: [], hasMore: false }; }
   async listItems() { return { rows: [], hasMore: false }; }
   async getItem() { return {}; }
+  async getItems(ids: string[]) { return Promise.all(ids.map((id) => this.getItem(id))); }
   async updateItemCustomFields() {}
   async findInvoiceByReference(ref: string) { return this.invoices.find((i) => i.reference_number === ref) ?? null; }
   async createInvoice(p: any) { const o = { ...p, invoice_id: `ZI${this.invoices.length + 1}`, invoice_number: `INV-Z${this.invoices.length + 1}`, status: 'draft', total: 0 }; this.invoices.push(o); return o; }
@@ -350,7 +351,7 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     const detailCalls: string[] = [];
     const api = Object.assign(new FakeZoho(), {
       // Zoho's item list leaves out custom fields; the item's own record has them
-      getItem: async (id: string) => { detailCalls.push(id); return id === 'ZI-DETAIL' ? { custom_field_hash: { cf_warranty_template: 'T12', cf_warranty_terms: 'From item record' } } : {}; },
+      getItems: async (ids: string[]) => { detailCalls.push(...ids); return ids.map((id) => ({ item_id: id, ...(id === 'ZI-DETAIL' ? { custom_field_hash: { cf_warranty_template: 'T12', cf_warranty_terms: 'From item record' } } : {}) })); },
       listTaxes: async () => [{ tax_id: 'ZT9', tax_name: 'Zoho tax A', tax_percentage: 12, tax_type: 'tax' }, { tax_id: 'ZT8', tax_name: 'Old tax', tax_percentage: 5, is_inactive: true },
         { tax_id: 'ZG18', tax_name: 'GST18', tax_percentage: 18, tax_type: 'tax_group', tax_specification: 'intra' },
         { tax_id: 'ZI18', tax_name: 'IGST18', tax_percentage: 18, tax_type: 'tax', tax_specification: 'inter', tax_specific_type: 'igst' }],

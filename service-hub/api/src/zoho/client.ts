@@ -14,6 +14,8 @@ export interface ZohoApi {
   listContacts(type: 'customer' | 'vendor', page: number): Promise<{ rows: any[]; hasMore: boolean }>;
   listItems(page: number): Promise<{ rows: any[]; hasMore: boolean }>;
   getItem(id: string): Promise<any>;
+  /** Bulk read of full item records (custom fields, tracking flags) — one call for many items. */
+  getItems(ids: string[]): Promise<any[]>;
   updateItemCustomFields(id: string, fields: object[]): Promise<void>;
   findInvoiceByReference(ref: string): Promise<any | null>;
   createInvoice(payload: object): Promise<any>;
@@ -29,10 +31,12 @@ export class ZohoClient implements ZohoApi {
 
   private async accessToken(force = false): Promise<string> {
     if (!force && this.token && this.token.expires > Date.now() + 60_000) return this.token.value;
-    const body = new URLSearchParams({
-      refresh_token: config.ZOHO_REFRESH_TOKEN, client_id: config.ZOHO_CLIENT_ID,
-      client_secret: config.ZOHO_CLIENT_SECRET, grant_type: 'refresh_token',
-    });
+    const body = config.ZOHO_REFRESH_TOKEN
+      ? new URLSearchParams({ refresh_token: config.ZOHO_REFRESH_TOKEN, client_id: config.ZOHO_CLIENT_ID, client_secret: config.ZOHO_CLIENT_SECRET, grant_type: 'refresh_token' })
+      : new URLSearchParams({
+          client_id: config.ZOHO_CLIENT_ID, client_secret: config.ZOHO_CLIENT_SECRET, grant_type: 'client_credentials', scope: config.ZOHO_SCOPE,
+          soid: config.ZOHO_SOID || `${config.ZOHO_PRODUCT === 'books' ? 'ZohoBooks' : 'ZohoPOS'}.${config.ZOHO_ORG_ID}`,
+        });
     const res = await fetch(`${config.ZOHO_ACCOUNTS_URL}/oauth/v2/token`, { method: 'POST', body });
     const json: any = await res.json().catch(() => ({}));
     if (!res.ok || !json.access_token)
@@ -71,6 +75,10 @@ export class ZohoClient implements ZohoApi {
     return { rows: j.items ?? [], hasMore: Boolean(j.page_context?.has_more_page) };
   }
   async getItem(id: string) { return (await this.req('GET', `/items/${id}`)).item; }
+  async getItems(ids: string[]) {
+    if (!ids.length) return [];
+    return (await this.req('GET', '/itemdetails', { query: { item_ids: ids.join(',') } })).items ?? [];
+  }
   async updateItemCustomFields(id: string, fields: object[]) {
     await this.req('PUT', `/items/${id}`, { body: { custom_fields: fields } });
   }

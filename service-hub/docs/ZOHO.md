@@ -15,7 +15,7 @@ case it is ever needed; see the end of this page.
 | Items | Zoho → app | Name, HSN/SAC, rate, **both** tax records (see below), goods/service, active. |
 | Item warranty fields | Zoho custom fields → app | Read into warranty terms. Edits made in the app are written back. |
 | Sales invoices | app → Zoho | Created as **draft**. `reference_number` = app number; warranty custom fields. |
-| Purchase bills | app → Zoho | Created as **draft**, with the vendor's own bill number. |
+| Purchase bills | app → Zoho | Created with the vendor's own bill number. |
 | Invoice status / total | Zoho → app | Refreshed every sync; a total that differs from the app's preview is flagged. |
 
 Pushes go through an **outbox** with idempotency keys. If a response is lost, the next attempt finds the draft by
@@ -23,30 +23,37 @@ its reference number instead of creating a second one. Failures retry with backo
 (e.g. a customer not linked to Zoho) fail at once and show on the *Zoho sync* page. A single bad record in a pull
 (for example an item whose SKU is already used by another item) is skipped and reported; it never stops the rest.
 
-Zoho's item **list** leaves out custom fields, so when warranty fields are configured the app reads an item's own
-record, but only for items that are new or changed since the last sync.
+Zoho's item **list** leaves out custom fields, so when warranty fields are configured the app reads full item
+records with Zoho's **bulk** item-detail call, but only for items that are new or changed since the last sync.
 
 ## Tax
 
 The app follows the Zoho tax setup. Each item carries two Zoho taxes: a GST tax group (same state) and an IGST tax
 (other state). The app keeps both ids and, for every invoice line, chooses by place of supply: the customer's place
 of supply equal to `HOME_PLACE_OF_SUPPLY` (your own state code as Zoho writes it) → GST; different → IGST. Set
-`HOME_PLACE_OF_SUPPLY` (the organisation's state code is shown in Zoho; yours is `KL`), otherwise the app cannot tell
-and always uses GST. Totals on screen are a preview (the rates are the same either way); Zoho calculates the final
+`HOME_PLACE_OF_SUPPLY` (the organisation's state code; for Kerala it is `KL`), otherwise the app cannot tell and
+always uses GST. Totals on screen are a preview (the rates are the same either way); Zoho calculates the final
 amounts and the app stores Zoho's total next to its own and flags any difference.
 
-## Checked against your Zoho Books organisation (read-only; nothing was written)
+## Checked against your Zoho Books organisation
+
+Read-only, nothing written:
 
 * The organisation is **GST-registered, state Kerala (KL)**, with SKU, locations and HSN/SAC enabled, and its plan
   shows as **"Zoho One Trial" (monthly)**. Make sure the subscription converts before the trial ends.
 * Books, Inventory and POS in this Zoho One account **share the same master data**: item ids and tax ids returned
   by Books are identical to the ones POS returned. So Books as the main system loses nothing.
-* Taxes: GST and IGST at 0 / 5 / 12 / 18 / 28 / 40. Customers carry `place_of_contact` (e.g. `KL`) and GST treatment.
-* Items have **no SKU** (the app falls back to part number, then Zoho's item id) and list stock on hand.
-* **Custom fields are allowed** (135 available, none created yet). Limits that matter: 5 multi-line, 50 single-line,
-  35 number, 35 date.
+* Customers carry `place_of_contact` (e.g. `KL`) and GST treatment; taxes are GST and IGST at 0 / 5 / 12 / 18 / 28 / 40.
 
-## Custom fields to create in Zoho Books
+**Live pull**, using the app's own Zoho client and sync code against the real organisation into a scratch database:
+12 taxes, 522 customers, 45 vendors and 710 items (546 active, 164 inactive; 10 services) all came in with **no
+skipped records**; every item received both its GST and IGST tax; items without a SKU (most of them) use Zoho's item
+id as the code; a second pull changed nothing. About 15 API calls read the custom fields of all 710 items.
+
+## Custom fields (created in Zoho Books)
+
+None existed; these ten **have been created** in the organisation, with the API names Zoho generated. That uses 3 of
+the 5 multi-line fields.
 
 | Module | Label | API name | Type |
 |---|---|---|---|
@@ -61,21 +68,44 @@ amounts and the app stores Zoho's total next to its own and flags any difference
 | Invoice | App Reference | `cf_app_reference` | Text (single line) |
 | Bill | App Reference | `cf_app_reference` | Text (single line) |
 
-**These ten fields have been created** in the Books organisation (API names as Zoho generated them). That uses 3 of
-the 5 multi-line fields. Put each field's id in `ZOHO_CUSTOM_FIELD_IDS`. The keys are the app's own names,
-`"<module>.<name>"`, where the reference field's key is `cf_app_ref` even though Zoho's API name is `cf_app_reference`:
+Put each field's Zoho id in `ZOHO_CUSTOM_FIELD_IDS`. The keys are the app's own names, `"<module>.<name>"`; the
+reference field's key is `cf_app_ref` even though Zoho's API name is `cf_app_reference`:
 
 ```json
-{"invoice.cf_warranty_start":"4008707000000123456","invoice.cf_warranty_terms":"4008707000000123457",
- "item.cf_warranty_template":"4008707000000123460"}
+{"invoice.cf_warranty_start":"<field id>","invoice.cf_warranty_terms":"<field id>",
+ "invoice.cf_serial_numbers":"<field id>","invoice.cf_app_ref":"<field id>","bill.cf_app_ref":"<field id>",
+ "item.cf_warranty_template":"<field id>","item.cf_warranty_parts_months":"<field id>",
+ "item.cf_warranty_labour_months":"<field id>","item.cf_warranty_onsite_months":"<field id>",
+ "item.cf_warranty_terms":"<field id>"}
 ```
 
-A field that is not in the map is skipped. Note: Zoho does **not** print multi-line custom fields on the invoice PDF
-(its `can_show_in_pdf` is false for them), so the per-unit warranty wording and serial numbers are stored on the
-invoice but do not appear on the printed copy; the single-line and date fields can. **Warranty start is the invoice date**, so `cf_warranty_start` always equals
+A field that is not in the map is skipped. **Warranty start is the invoice date**, so `cf_warranty_start` always equals
 the invoice date; per-unit end dates are in the app and on the certificate. On each item pull, warranty values on a
 Zoho item become (or match) a warranty template: by code if it exists, otherwise a template named from the month
 values is created.
+
+Zoho does **not** print multi-line custom fields on the invoice PDF (`can_show_in_pdf` is false for them), so the
+per-unit warranty wording and serial numbers are stored on the invoice but do not appear on the printed copy; the
+single-line and date fields can.
+
+## Connecting (India data centre)
+
+The simplest way needs only a **Client ID and Client Secret** (no refresh token, no grant code):
+
+1. Open <https://api-console.zoho.in> and create a **Self Client**.
+2. Put `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_ORG_ID` (your Books organisation id), `HOME_PLACE_OF_SUPPLY`
+   and `ZOHO_CUSTOM_FIELD_IDS` in the server's `.env`. Leave `ZOHO_REFRESH_TOKEN` blank. The app then asks Zoho for a
+   fresh one-hour token whenever it needs one (the "client credentials" flow), scoped to your organisation. If you
+   prefer a refresh token, set `ZOHO_REFRESH_TOKEN` and it is used instead.
+3. The default scope is deliberately narrow: `ZohoBooks.settings.READ`, `ZohoBooks.settings.UPDATE`,
+   `ZohoBooks.contacts.READ`, `ZohoBooks.invoices.CREATE`, `ZohoBooks.invoices.READ`, `ZohoBooks.bills.CREATE`,
+   `ZohoBooks.bills.READ` (override with `ZOHO_SCOPE`). Reading taxes, items and contacts was confirmed to work with
+   `settings.READ` and `contacts.READ` alone; Zoho accepts the full list.
+4. Restart, then **Zoho sync → Sync now**. Taxes, contacts and items are pulled; confirmed invoices and bills then
+   push on their own every minute. On a plan with a daily API cap, raise `ZOHO_SYNC_INTERVAL_SEC` (e.g. 300).
+
+**Treat the Client Secret like a password.** Keep it only in the server's `.env`. If it has been pasted into a chat
+or email, generate a new one in the API console and replace it.
 
 ## Decisions still needed
 
@@ -85,24 +115,12 @@ values is created.
    thing to build.
 2. **Serial/batch tracking inside Zoho.** Left off, as now, Zoho never asks for serial numbers on the draft. Books
    *can* also record serial/batch numbers on invoice lines ("advanced tracking"); if you want Zoho to hold them too,
-   the app can send them with the draft invoice. Say so and I will add it.
+   the app can send them with the draft invoice.
 
-## Connecting (India data centre)
-
-1. Open <https://api-console.zoho.in> and create a **Self Client**.
-2. Generate a grant code with scope `ZohoBooks.fullaccess.all` (narrow it to invoices, bills, contacts, items and
-   settings once everything works), then exchange it for a **refresh token**.
-3. Put `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID` (your Books organisation id) and
-   `HOME_PLACE_OF_SUPPLY` in `.env`. Defaults: `ZOHO_PRODUCT=books`, `accounts.zoho.in`, `www.zohoapis.in`.
-4. Restart, then **Zoho sync → Sync now**. Taxes, contacts and items are pulled; confirmed invoices and bills then
-   push on their own every minute. On a plan with a daily API cap, raise `ZOHO_SYNC_INTERVAL_SEC` (e.g. 300).
-
-## Not verified yet — the first connect will tell
-
-These come from Zoho's documentation or from the reads above, not from a live write:
+## Not verified yet: needs one live write to confirm
 
 * Invoice and bill creation accepts `custom_fields: [{customfield_id, value}]`, and an invoice created without a
-  send flag stays a draft.
+  send flag stays a draft; the status of a newly created bill (draft or open) is not documented.
 * The `reference_number` filter on invoice/bill lists works for the duplicate check.
 * Item custom-field write-back uses `PUT /items/{id}` with `custom_fields`.
 

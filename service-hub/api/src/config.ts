@@ -16,7 +16,13 @@ const schema = z.object({
   ZOHO_ACCOUNTS_URL: z.string().default('https://accounts.zoho.in'),
   ZOHO_CLIENT_ID: z.string().default(''),
   ZOHO_CLIENT_SECRET: z.string().default(''),
+  // Either set a refresh token, or leave it blank to use the Self Client "client credentials" flow
+  // (the client id and secret alone; the app asks Zoho for a fresh hourly token itself).
   ZOHO_REFRESH_TOKEN: z.string().default(''),
+  // Least privilege: read taxes/items/contacts, update item fields, create and read invoices and bills.
+  ZOHO_SCOPE: z.string().default('ZohoBooks.settings.READ,ZohoBooks.settings.UPDATE,ZohoBooks.contacts.READ,ZohoBooks.invoices.CREATE,ZohoBooks.invoices.READ,ZohoBooks.bills.CREATE,ZohoBooks.bills.READ'),
+  // Only for client credentials. Default: ZohoBooks.<org id> (ZohoPOS.<org id> in POS mode).
+  ZOHO_SOID: z.string().default(''),
   ZOHO_ORG_ID: z.string().default(''),
   // 'books' = Zoho Books API (main), 'pos' = Zoho POS (Zakya) API. POS paths are /inventory/v1/... on the Zakya host.
   ZOHO_PRODUCT: z.enum(['pos', 'books']).default('books'),
@@ -42,4 +48,4 @@ if (config.NODE_ENV === 'production' && config.JWT_SECRET.startsWith('dev-only')
   process.exit(1);
 }
 
-export const zohoEnabled = Boolean(config.ZOHO_REFRESH_TOKEN && config.ZOHO_CLIENT_ID && config.ZOHO_ORG_ID);
+export const zohoEnabled = Boolean(config.ZOHO_CLIENT_ID && config.ZOHO_CLIENT_SECRET && config.ZOHO_ORG_ID);
