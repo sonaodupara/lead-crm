@@ -58,18 +58,21 @@ amounts and the app stores Zoho's total next to its own and flags any difference
 | Invoice | Warranty Start | `cf_warranty_start` | Date |
 | Invoice | Warranty Terms | `cf_warranty_terms` | Text (multi-line) |
 | Invoice | Serial Numbers | `cf_serial_numbers` | Text (multi-line) |
-| Invoice | App Reference | `cf_app_ref` | Text (single line) |
-| Bill | App Reference | `cf_app_ref` | Text (single line) |
+| Invoice | App Reference | `cf_app_reference` | Text (single line) |
+| Bill | App Reference | `cf_app_reference` | Text (single line) |
 
-That uses 3 of the 5 multi-line fields. Then put each field's id in `ZOHO_CUSTOM_FIELD_IDS`, keyed
-`"<module>.<api name>"`:
+**These ten fields have been created** in the Books organisation (API names as Zoho generated them). That uses 3 of
+the 5 multi-line fields. Put each field's id in `ZOHO_CUSTOM_FIELD_IDS`. The keys are the app's own names,
+`"<module>.<name>"`, where the reference field's key is `cf_app_ref` even though Zoho's API name is `cf_app_reference`:
 
 ```json
 {"invoice.cf_warranty_start":"4008707000000123456","invoice.cf_warranty_terms":"4008707000000123457",
  "item.cf_warranty_template":"4008707000000123460"}
 ```
 
-A field that is not in the map is skipped. **Warranty start is the invoice date**, so `cf_warranty_start` always equals
+A field that is not in the map is skipped. Note: Zoho does **not** print multi-line custom fields on the invoice PDF
+(its `can_show_in_pdf` is false for them), so the per-unit warranty wording and serial numbers are stored on the
+invoice but do not appear on the printed copy; the single-line and date fields can. **Warranty start is the invoice date**, so `cf_warranty_start` always equals
 the invoice date; per-unit end dates are in the app and on the certificate. On each item pull, warranty values on a
 Zoho item become (or match) a warranty template: by code if it exists, otherwise a template named from the month
 values is created.
