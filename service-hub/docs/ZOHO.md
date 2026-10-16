@@ -2,8 +2,8 @@
 
 Zoho stays the **books of record**. This app owns serial numbers, batches, warranty, service jobs and AMC
 visits. Sales invoices are pushed to Zoho as **drafts** for the accountant to review. Purchase bills are created
-as **open** bills, because Zoho Books has no draft state for them; the app therefore posts a bill only when it is
-received into stock.
+as **open** bills, because Zoho Books has no draft state for them; the app therefore holds every bill until an
+accountant presses **Send to Zoho** on it.
 
 `ZOHO_PRODUCT=books` is the default. `ZOHO_PRODUCT=pos` switches the same code to the Zoho POS (Zakya) API, in
 case it is ever needed; see the end of this page.
@@ -17,7 +17,7 @@ case it is ever needed; see the end of this page.
 | Items | Zoho → app | Name, HSN/SAC, rate, **both** tax records (see below), goods/service, active. |
 | Item warranty fields | Zoho custom fields → app | Read into warranty terms. Edits made in the app are written back. |
 | Sales invoices | app → Zoho | Created as **draft**. `reference_number` = app number; warranty custom fields. |
-| Purchase bills | app → Zoho | Created as an **open** bill with the vendor's own bill number, when received into stock. |
+| Purchase bills | app → Zoho | Created as an **open** bill with the vendor's own bill number, **only when an accountant presses Send to Zoho**. Receiving a bill into stock does not post it. |
 | Invoice status / total | Zoho → app | Refreshed every sync; a total that differs from the app's preview is flagged. |
 
 Pushes go through an **outbox** with idempotency keys. If a response is lost, the next attempt finds the draft by

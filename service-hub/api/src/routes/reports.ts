@@ -6,7 +6,7 @@ import { roles } from '../auth.js';
 export default async function reports(app: FastifyInstance) {
   app.get('/api/dashboard', { preHandler: roles('supervisor', 'accountant', 'sales') }, async () => {
     const one = async (sql: string) => (await pool.query(sql)).rows[0].n as number;
-    const [expiring30, expiring90, lowStock, expiringBatches, openJobs, slaBreached, unassigned, syncFailed, draftInvoices, amcVisitsDue] = await Promise.all([
+    const [expiring30, expiring90, lowStock, expiringBatches, openJobs, slaBreached, unassigned, syncFailed, draftInvoices, amcVisitsDue, billsToSend] = await Promise.all([
       one(`select count(*)::int n from warranties where status='active' and greatest(parts_end,labour_end,onsite_end) between current_date and current_date+30`),
       one(`select count(*)::int n from warranties where status='active' and greatest(parts_end,labour_end,onsite_end) between current_date and current_date+90`),
       one(`select count(*)::int n from (select i.id from items i left join stock_movements m on m.item_id=i.id where i.active and not i.is_service and i.reorder_level>0
@@ -19,10 +19,11 @@ export default async function reports(app: FastifyInstance) {
       one(`select (select count(*) from sales_invoices where sync_status='failed') + (select count(*) from purchase_bills where sync_status='failed') as n`),
       one(`select count(*)::int n from sales_invoices where status='draft'`),
       one(`select count(*)::int n from amc_visits v join amc_contracts k on k.id=v.contract_id where v.status='scheduled' and k.status='active' and v.due_date <= current_date+14`),
+      one(`select count(*)::int n from purchase_bills where status='received' and sync_status='not_synced'`),
     ]);
     return { warranties_expiring_30d: expiring30, warranties_expiring_90d: expiring90, low_stock_items: lowStock,
       batches_expiring_60d: expiringBatches, open_jobs: openJobs, sla_breached: slaBreached, unassigned_jobs: unassigned,
-      zoho_sync_failures: syncFailed, draft_invoices: draftInvoices, amc_visits_due_14d: amcVisitsDue };
+      zoho_sync_failures: syncFailed, draft_invoices: draftInvoices, amc_visits_due_14d: amcVisitsDue, bills_to_send: billsToSend };
   });
 
   /** What warranty service is costing, by brand/item: parts at purchase cost on in-warranty jobs. */

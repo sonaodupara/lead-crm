@@ -25,7 +25,7 @@
 | Technicians draw parts **from the store at the point of use**; a shortfall is recorded and flagged, never blocks the visit. | `lib/jobs.ts` |
 | Chargeable jobs become a draft invoice (parts + labour + travel); stock is not issued a second time. | `createJobInvoice` |
 | AMC: per-visit billing creates an invoice per completed visit; annual billing one invoice for the term. Due visits become jobs automatically. | `lib/amcService.ts` |
-| Sales invoices reach Zoho **only as drafts**; purchase bills are created as **open** bills (Zoho Books has no draft state for them). Both go through an idempotent outbox. | `zoho/` |
+| Sales invoices reach Zoho **only as drafts**; purchase bills are created as **open** bills (Zoho Books has no draft state for them), so they wait until an accountant presses **Send to Zoho**. Both go through an idempotent outbox. | `zoho/` |
 
 ## Offline technicians
 
@@ -45,7 +45,7 @@ a service worker, so the app opens with no signal and shows the last downloaded 
 | Create jobs from a request | ✓ | ✓ | ✓ | ✓* | |
 | Warranty terms, extend / void warranties | ✓ | ✓ | | | |
 | Receive bills into stock | ✓ | ✓ | ✓ | | |
-| Record bills, confirm invoices, Zoho sync | ✓ | | ✓ | | |
+| Record bills, confirm invoices, **send bills to Zoho**, Zoho sync | ✓ | | ✓ | | |
 | Draft invoices | ✓ | | ✓ | ✓ | |
 | Stock levels, serial/warranty lookup | ✓ | ✓ | ✓ | ✓ | lookup only |
 | Users, settings | ✓ | | | | |

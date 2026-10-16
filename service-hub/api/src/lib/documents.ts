@@ -114,8 +114,9 @@ export async function receiveBill(c: Queryable, userId: string, billId: string) 
         kind: 'purchase', ref_type: 'purchase_bill', ref_id: billId, created_by: userId });
     }
   }
+  // Receiving adds stock here only. Zoho has no draft state for bills, so the bill is posted to Zoho later,
+  // when an accountant explicitly sends it (POST /api/bills/:id/send-to-zoho).
   await c.query(`update purchase_bills set status='received', updated_at=now() where id=$1`, [billId]);
-  await enqueueZoho(c, 'purchase_bill', billId);
   await audit(c, userId, 'bill.receive', 'purchase_bill', billId);
 }
 

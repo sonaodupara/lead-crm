@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, openProtected } from '../api';
+import { useAuth } from '../auth';
 import { useGet, useInvalidate, useTaxes, docTotals } from '../hooks';
 import { Badge, Card, Combo, Empty, Field, fetchers, fmtDate, money, PageHead, todayStr, useAction, type Option } from '../ui';
 
@@ -12,6 +13,8 @@ export default function BillEdit() {
   const { id } = useParams();
   const isNew = id === 'new';
   const nav = useNavigate();
+  const { user } = useAuth();
+  const canSend = user && ['owner', 'accountant'].includes(user.role);
   const inval = useInvalidate();
   const { run, busy } = useAction();
   const taxes = useTaxes();
@@ -72,7 +75,7 @@ export default function BillEdit() {
   if (!isNew && existing.isLoading) return <div className="muted">Loading…</div>;
   return (
     <div className="stack">
-      <PageHead title={isNew ? 'Record a purchase bill' : `Bill ${b?.number ?? ''}`}>{b && <><Badge v={b.status} />{b.status !== 'draft' && <Badge v={b.sync_status} label={`Zoho: ${b.sync_status.replace('_', ' ')}`} />}</>}</PageHead>
+      <PageHead title={isNew ? 'Record a purchase bill' : `Bill ${b?.number ?? ''}`}>{b && <><Badge v={b.status} />{b.status !== 'draft' && b.status !== 'cancelled' && <Badge v={b.sync_status} label={`Zoho: ${b.sync_status === 'not_synced' ? 'not sent' : b.sync_status === 'pending' ? 'queued' : b.sync_status === 'synced' ? 'in Zoho' : b.sync_status}`} />}</>}</PageHead>
 
       <Card>
         <div className="grid">
@@ -116,10 +119,18 @@ export default function BillEdit() {
           <div style={{ marginTop: 8 }}><button className="btn" onClick={() => file.current?.click()}>Attach photo / PDF</button></div>
         </Card>)}
 
+      {b && b.status === 'received' && b.sync_status === 'not_synced' && (
+        <Card title="Not in Zoho yet">
+          <p style={{ marginTop: 0 }}>The stock is recorded here, but this bill has <strong>not</strong> been posted to Zoho. Zoho has no draft state for bills, so it will be created as an <strong>open</strong> bill.</p>
+          {canSend
+            ? <button className="btn primary" disabled={busy} onClick={async () => { if (confirm('Post this bill to Zoho as an open bill? Check the vendor, bill number and amounts first.') && await run(() => api.post(`/api/bills/${id}/send-to-zoho`), 'Queued for Zoho')) { inval('/api/'); } }}>Send to Zoho</button>
+            : <div className="muted small">Waiting for an accountant to send it.</div>}
+        </Card>)}
+
       {b?.outbox?.last_error && <Card title="Zoho"><div className="bad">{b.outbox.last_error}</div>
         <div style={{ marginTop: 8 }}><button className="btn" onClick={async () => { await run(() => api.post(`/api/bills/${id}/resync`), 'Queued again'); inval(`/api/bills/${id}`); }}>Retry sync</button></div></Card>}
 
-      {!readonly && <p className="muted small" style={{ margin: 0 }}>Receiving a bill adds the stock here and posts it to Zoho as an <strong>open</strong> bill (Zoho has no draft state for bills), so check the figures first.</p>}
+      {!readonly && <p className="muted small" style={{ margin: 0 }}>Receiving a bill adds the stock here only. It is <strong>not</strong> posted to Zoho until an accountant presses <em>Send to Zoho</em> on the bill.</p>}
       {!readonly && (
         <div className="row">
           <button className="btn" disabled={busy} onClick={() => save(false)}>Save draft</button>

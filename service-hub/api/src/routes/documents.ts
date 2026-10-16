@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { audit, pool, tx } from '../db.js';
 import { actor, ANY, authed, roles } from '../auth.js';
-import { config } from '../config.js';
+import { config, zohoEnabled } from '../config.js';
 import { fail } from '../lib/errors.js';
 import { confirmInvoice, receiveBill, saveBill, saveInvoice } from '../lib/documents.js';
 import { enqueueZoho } from '../lib/outbox.js';
@@ -40,12 +40,13 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/he
 export default async function documents(app: FastifyInstance) {
   // ───────── purchase bills ─────────
   app.get('/api/bills', { preHandler: roles('accountant', 'supervisor') }, async (req) => {
-    const { status, q } = z.object({ status: z.string().optional(), q: z.string().optional() }).parse(req.query);
+    const { status, q, unsent } = z.object({ status: z.string().optional(), q: z.string().optional(), unsent: z.coerce.boolean().optional() }).parse(req.query);
     return (await pool.query(
       `select b.id,b.number,b.vendor_bill_no,b.bill_date,b.status,b.sync_status,b.total,b.zoho_status,v.name as vendor
          from purchase_bills b join vendors v on v.id=b.vendor_id
         where ($1::text is null or b.status=$1) and ($2::text is null or lower(v.name) like $2 or lower(b.vendor_bill_no) like $2 or lower(b.number) like $2)
-        order by b.created_at desc limit 300`, [status ?? null, q ? `%${q.toLowerCase()}%` : null])).rows;
+          and ($3::boolean is not true or (b.status='received' and b.sync_status='not_synced'))
+        order by b.created_at desc limit 300`, [status ?? null, q ? `%${q.toLowerCase()}%` : null, unsent ?? null])).rows;
   });
 
   app.get('/api/bills/:id', { preHandler: roles('accountant', 'supervisor') }, async (req) => {
@@ -65,6 +66,28 @@ export default async function documents(app: FastifyInstance) {
     tx(async (c) => ({ id: await saveBill(c, actor(req).id, billBody.parse(req.body), (req.params as any).id) })));
   app.post('/api/bills/:id/receive', { preHandler: roles('accountant', 'supervisor') }, async (req) =>
     tx(async (c) => { await receiveBill(c, actor(req).id, (req.params as any).id); return { ok: true }; }));
+  /**
+   * Post a received bill to Zoho. Zoho Books creates it as an OPEN bill (there is no draft state for bills), so this
+   * is a deliberate accountant step rather than something that happens when the bill is received.
+   */
+  app.post('/api/bills/:id/send-to-zoho', { preHandler: roles('accountant') }, async (req) => {
+    if (!zohoEnabled) fail(409, 'Zoho is not connected on this server (see docs/ZOHO.md)');
+    const id = (req.params as any).id;
+    return tx(async (c) => {
+      const b = (await c.query('select status, sync_status, number from purchase_bills where id=$1 for update', [id])).rows[0];
+      if (!b) fail(404, 'Bill not found');
+      if (b.status !== 'received') fail(409, 'Receive the bill into stock before sending it to Zoho');
+      if (b.sync_status === 'synced') fail(409, 'This bill is already in Zoho');
+      if (b.sync_status === 'pending') fail(409, 'This bill is already queued for Zoho');
+      if (b.sync_status === 'failed') {
+        await c.query(`update zoho_outbox set status='pending', attempts=0, next_attempt_at=now(), last_error=null where entity_type='purchase_bill' and entity_id=$1 and status='failed'`, [id]);
+      }
+      await enqueueZoho(c, 'purchase_bill', id);
+      await audit(c, actor(req).id, 'bill.send_to_zoho', 'purchase_bill', id);
+      return { ok: true };
+    });
+  });
+
   app.post('/api/bills/:id/cancel', { preHandler: roles('accountant') }, async (req) => {
     const r = await pool.query(`update purchase_bills set status='cancelled', updated_at=now() where id=$1 and status='draft' returning id`, [(req.params as any).id]);
     if (!r.rowCount) fail(409, 'Only draft bills can be cancelled');

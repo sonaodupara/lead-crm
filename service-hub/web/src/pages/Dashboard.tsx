@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
+import { useAuth } from '../auth';
 import { useGet } from '../hooks';
 import { PageHead } from '../ui';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const { data: d, isLoading, error } = useGet<any>('/api/dashboard');
   const tile = (to: string, n: number | undefined, label: string, tone = '') => (
     <Link to={to} className={`tile ${tone}`}><div className="n">{n ?? '–'}</div><div className="muted small">{label}</div></Link>
@@ -30,6 +32,7 @@ export default function Dashboard() {
         <h3 className="muted">Accounts</h3>
         <div className="tiles">
           {tile('/invoices', d.draft_invoices, 'Draft invoices to confirm')}
+          {user?.role !== 'sales' && tile('/bills?unsent=1', d.bills_to_send, 'Bills waiting to send to Zoho', d.bills_to_send ? 'warn' : '')}
           {tile('/zoho', d.zoho_sync_failures, 'Zoho sync failures', d.zoho_sync_failures ? 'alert' : '')}
         </div>
       </>}

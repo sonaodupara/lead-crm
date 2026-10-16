@@ -98,6 +98,11 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
       lines: [{ ...line, serial_nos: ['SN-1', 'SN-2'] }, { item_id: ids.seal, qty: 10, rate: 60, tax_id: ids.tax }] });
     await ok('POST', `/api/bills/${bill.id}/receive`, tok.accountant);
     ids.bill = bill.id;
+    // receiving adds stock but must not post anything to Zoho: bills there are created OPEN, so an accountant sends them
+    expect((await pool.query(`select count(*)::int n from zoho_outbox where entity_type='purchase_bill'`)).rows[0].n).toBe(0);
+    expect((await ok('GET', `/api/bills/${bill.id}`, tok.accountant)).sync_status).toBe('not_synced');
+    expect((await ok('GET', '/api/dashboard', tok.supervisor)).bills_to_send).toBe(1);
+    expect((await ok('GET', '/api/bills?unsent=true', tok.accountant)).map((b: any) => b.id)).toEqual([bill.id]);
     expect(await stockOf('Pump X')).toBe(2);
     expect(await stockOf('Seal kit')).toBe(10);
     const dupe = await call('POST', '/api/bills', tok.accountant, { vendor_id: ids.vendor, vendor_bill_no: 'v-100', bill_date: today(), lines: [{ item_id: ids.seal, qty: 1, rate: 1 }] });
@@ -149,6 +154,16 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
   });
 
   it('pushes invoice and bill to Zoho as drafts, exactly once, with warranty custom fields', async () => {
+    expect((await processOutbox(zoho)).failed).toBe(0);
+    expect(zoho.bills).toHaveLength(0);                       // the received bill is still waiting for an accountant
+    const draftBill = await ok('POST', '/api/bills', tok.accountant, { vendor_id: ids.vendor, vendor_bill_no: 'V-DRAFT', bill_date: today(), lines: [{ item_id: ids.seal, qty: 1, rate: 1 }] });
+    expect((await call('POST', `/api/bills/${draftBill.id}/send-to-zoho`, tok.accountant)).status).toBe(409);   // not received yet
+    await ok('POST', `/api/bills/${draftBill.id}/cancel`, tok.accountant);
+    expect((await call('POST', `/api/bills/${ids.bill}/send-to-zoho`, tok.supervisor)).status).toBe(403);       // accountants only
+    expect((await call('POST', `/api/bills/${ids.bill}/send-to-zoho`, tok.sales)).status).toBe(403);
+    await ok('POST', `/api/bills/${ids.bill}/send-to-zoho`, tok.accountant);
+    expect((await call('POST', `/api/bills/${ids.bill}/send-to-zoho`, tok.accountant)).status).toBe(409);       // already queued
+    expect((await ok('GET', `/api/bills/${ids.bill}`, tok.accountant)).sync_status).toBe('pending');
     const res = await processOutbox(zoho);
     expect(res.failed).toBe(0);
     expect(zoho.invoices).toHaveLength(1);
@@ -163,6 +178,9 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     expect(cf.cf3).toBe('Pump X: SN-1');
     expect(zoho.bills).toHaveLength(1);
     expect(zoho.bills[0]).toMatchObject({ vendor_id: 'ZV1', bill_number: 'V-100' });
+    expect((await call('POST', `/api/bills/${ids.bill}/send-to-zoho`, tok.accountant)).status).toBe(409);       // already in Zoho
+    expect((await ok('GET', `/api/bills/${ids.bill}`, tok.accountant)).sync_status).toBe('synced');
+    expect((await ok('GET', '/api/dashboard', tok.supervisor)).bills_to_send).toBe(0);
 
     await processOutbox(zoho); // second pass must not create duplicates
     expect(zoho.invoices).toHaveLength(1);

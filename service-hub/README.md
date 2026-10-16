@@ -2,7 +2,7 @@
 
 Inventory, batch/serial tracking, warranty, AMC and field-service management that sits beside Zoho.
 Zoho stays the books of record; this app owns serial/batch/warranty/service data. Sales invoices are pushed to
-Zoho as **drafts** for the accountant to review; purchase bills are created as open bills (Zoho has no bill drafts).
+Zoho as **drafts** for the accountant to review; purchase bills are created as open bills (Zoho has no bill drafts), so they are only sent when an accountant presses *Send to Zoho*.
 
 | Part | Stack |
 |---|---|
