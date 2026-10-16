@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { termsSummary } from '../lib/warranty.js';
 import { ZohoError, type ZohoApi } from './client.js';
 import {
-  buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax,
+  buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax, totalsMismatch,
   warrantyFromZohoItem, type ZohoItemWarranty,
 } from './mapper.js';
 
@@ -170,8 +170,9 @@ async function pushInvoice(api: ZohoApi, id: string) {
     `update sales_invoices set zoho_invoice_id=$2, zoho_invoice_number=$3, zoho_status=$4, zoho_total=$5,
        sync_status='synced', updated_at=now() where id=$1`,
     [id, created.invoice_id, created.invoice_number ?? null, created.status ?? 'draft', created.total ?? null]);
-  if (created.total != null && Math.abs(created.total - inv.total) > 0.05)
-    await audit(pool, null, 'invoice.total_mismatch', 'sales_invoice', id, { app: inv.total, zoho: created.total });
+  if (totalsMismatch(created, inv))
+    await audit(pool, null, 'invoice.total_mismatch', 'sales_invoice', id,
+      { app: { subtotal: inv.subtotal, tax: inv.tax_total, total: inv.total }, zoho: { subtotal: created.sub_total, tax: created.tax_total, total: created.total } });
 }
 
 async function pushBill(api: ZohoApi, id: string) {

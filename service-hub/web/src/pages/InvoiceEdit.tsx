@@ -105,7 +105,7 @@ export default function InvoiceEdit() {
 
       <Card>
         <div className="row" style={{ justifyContent: 'flex-end' }}><span className="muted">Subtotal {money(totals.subtotal)}</span><span className="muted">Tax {money(totals.tax)}</span><strong>Total {money(totals.total)}</strong></div>
-        {d?.zoho_total != null && <div className="row" style={{ justifyContent: 'flex-end' }}><span className={Math.abs(d.zoho_total - d.total) > 0.05 ? 'bad' : 'muted'}>Zoho total {money(d.zoho_total)}{Math.abs(d.zoho_total - d.total) > 0.05 ? ' — differs from this app, check in Zoho' : ''}</span></div>}
+        {d?.zoho_total != null && <div className="row" style={{ justifyContent: 'flex-end' }}><span className={Math.abs(d.zoho_total - d.total) > 0.5 ? 'bad' : 'muted'}>Zoho total {money(d.zoho_total)}{Math.abs(d.zoho_total - d.total) > 0.5 ? ' — differs from this app by more than rounding, check in Zoho' : ''}</span></div>}
         <p className="muted small" style={{ marginBottom: 0 }}>Totals here are a preview; Zoho calculates the final amounts using its own tax settings.</p>
       </Card>
 

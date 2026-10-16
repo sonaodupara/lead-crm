@@ -25,7 +25,7 @@
 | Technicians draw parts **from the store at the point of use**; a shortfall is recorded and flagged, never blocks the visit. | `lib/jobs.ts` |
 | Chargeable jobs become a draft invoice (parts + labour + travel); stock is not issued a second time. | `createJobInvoice` |
 | AMC: per-visit billing creates an invoice per completed visit; annual billing one invoice for the term. Due visits become jobs automatically. | `lib/amcService.ts` |
-| Invoices and bills reach Zoho **only as drafts**, via an idempotent outbox. | `zoho/` |
+| Sales invoices reach Zoho **only as drafts**; purchase bills are created as **open** bills (Zoho Books has no draft state for them). Both go through an idempotent outbox. | `zoho/` |
 
 ## Offline technicians
 

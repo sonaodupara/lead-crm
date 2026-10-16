@@ -119,6 +119,7 @@ export default function BillEdit() {
       {b?.outbox?.last_error && <Card title="Zoho"><div className="bad">{b.outbox.last_error}</div>
         <div style={{ marginTop: 8 }}><button className="btn" onClick={async () => { await run(() => api.post(`/api/bills/${id}/resync`), 'Queued again'); inval(`/api/bills/${id}`); }}>Retry sync</button></div></Card>}
 
+      {!readonly && <p className="muted small" style={{ margin: 0 }}>Receiving a bill adds the stock here and posts it to Zoho as an <strong>open</strong> bill (Zoho has no draft state for bills), so check the figures first.</p>}
       {!readonly && (
         <div className="row">
           <button className="btn" disabled={busy} onClick={() => save(false)}>Save draft</button>

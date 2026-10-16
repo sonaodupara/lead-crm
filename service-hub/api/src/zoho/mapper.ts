@@ -141,3 +141,15 @@ export function warrantyFromZohoItem(item: any): ZohoItemWarranty | null {
     out.onsite_months !== undefined || out.terms;
   return has ? out : null;
 }
+
+/**
+ * Does Zoho's version of a document disagree with the app's preview? Zoho may round the final total to a whole
+ * rupee, so the total gets up to 50 paise of room; subtotal and tax must match almost exactly.
+ */
+export function totalsMismatch(
+  zoho: { sub_total?: number; tax_total?: number; total?: number },
+  app: { subtotal: number; tax_total: number; total: number },
+): boolean {
+  const off = (a: number | undefined, b: number, tol: number) => a != null && Math.abs(a - b) > tol;
+  return off(zoho.sub_total, app.subtotal, 0.05) || off(zoho.tax_total, app.tax_total, 0.05) || off(zoho.total, app.total, 0.5);
+}

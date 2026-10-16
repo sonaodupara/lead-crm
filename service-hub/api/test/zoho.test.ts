@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { changedSince } from '../src/zoho/sync.js';
-import { buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax, warrantyFromZohoItem } from '../src/zoho/mapper.js';
+import { buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax, totalsMismatch, warrantyFromZohoItem } from '../src/zoho/mapper.js';
 
 const ids = { 'invoice.cf_warranty_start': 'F1', 'invoice.cf_warranty_terms': 'F2', 'invoice.cf_app_ref': 'F4' };
 const base = {
@@ -105,5 +105,21 @@ describe('deciding when to re-read an item from Zoho', () => {
     expect(changedSince(new Date('2026-10-07T10:30:00Z'), '2026-10-07T15:49:27+0530')).toBe(false);
     expect(changedSince(new Date(), undefined)).toBe(true);                                   // no timestamp: be safe
     expect(changedSince(new Date(), 'garbage')).toBe(true);
+  });
+});
+
+describe('comparing Zoho totals with the app preview', () => {
+  const app = { subtotal: 0.35, tax_total: 0.06, total: 0.41 };
+  it('allows for Zoho rounding the final total to a whole rupee (seen live: 0.41 came back as 0)', () => {
+    expect(totalsMismatch({ sub_total: 0.35, tax_total: 0.06, total: 0 }, app)).toBe(false);
+    expect(totalsMismatch({ sub_total: 11800, tax_total: 2124, total: 13924 }, { subtotal: 11800, tax_total: 2124, total: 13923.6 })).toBe(false);
+  });
+  it('flags a real difference in subtotal, tax or a large difference in total', () => {
+    expect(totalsMismatch({ sub_total: 0.40, tax_total: 0.06, total: 0 }, app)).toBe(true);
+    expect(totalsMismatch({ sub_total: 0.35, tax_total: 0.12, total: 0 }, app)).toBe(true);        // tax off by 6 paise
+    expect(totalsMismatch({ sub_total: 100, tax_total: 18, total: 119 }, { subtotal: 100, tax_total: 18, total: 118 })).toBe(true);
+  });
+  it('ignores fields Zoho did not send', () => {
+    expect(totalsMismatch({}, app)).toBe(false);
   });
 });

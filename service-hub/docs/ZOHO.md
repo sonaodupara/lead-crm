@@ -1,7 +1,9 @@
 # Zoho integration (Zoho Books is the main system)
 
 Zoho stays the **books of record**. This app owns serial numbers, batches, warranty, service jobs and AMC
-visits, and pushes accounting documents to Zoho as **drafts** for the accountant to review.
+visits. Sales invoices are pushed to Zoho as **drafts** for the accountant to review. Purchase bills are created
+as **open** bills, because Zoho Books has no draft state for them; the app therefore posts a bill only when it is
+received into stock.
 
 `ZOHO_PRODUCT=books` is the default. `ZOHO_PRODUCT=pos` switches the same code to the Zoho POS (Zakya) API, in
 case it is ever needed; see the end of this page.
@@ -15,7 +17,7 @@ case it is ever needed; see the end of this page.
 | Items | Zoho → app | Name, HSN/SAC, rate, **both** tax records (see below), goods/service, active. |
 | Item warranty fields | Zoho custom fields → app | Read into warranty terms. Edits made in the app are written back. |
 | Sales invoices | app → Zoho | Created as **draft**. `reference_number` = app number; warranty custom fields. |
-| Purchase bills | app → Zoho | Created with the vendor's own bill number. |
+| Purchase bills | app → Zoho | Created as an **open** bill with the vendor's own bill number, when received into stock. |
 | Invoice status / total | Zoho → app | Refreshed every sync; a total that differs from the app's preview is flagged. |
 
 Pushes go through an **outbox** with idempotency keys. If a response is lost, the next attempt finds the draft by
@@ -117,12 +119,21 @@ or email, generate a new one in the API console and replace it.
    *can* also record serial/batch numbers on invoice lines ("advanced tracking"); if you want Zoho to hold them too,
    the app can send them with the draft invoice.
 
-## Not verified yet: needs one live write to confirm
+## Verified live with a real write
 
-* Invoice and bill creation accepts `custom_fields: [{customfield_id, value}]`, and an invoice created without a
-  send flag stays a draft; the status of a newly created bill (draft or open) is not documented.
-* The `reference_number` filter on invoice/bill lists works for the duplicate check.
-* Item custom-field write-back uses `PUT /items/{id}` with `custom_fields`.
+One test invoice and one test bill were created in the organisation through the app's own payload builders, using
+the narrow default scope, then read back and **deleted** (confirmed gone). The invoice used its own test number, so
+the real invoice number series was not touched. Confirmed:
+
+* A sales invoice is created as a **draft**, with `reference_number` = the app number, the right same-state tax
+  (GST18) chosen for the line, and all four warranty custom fields stored.
+* The duplicate check by `reference_number` finds the created invoice and bill.
+* A bill is created as **open** (not draft) and carries its custom field.
+* Zoho may **round the invoice total to a whole rupee** (a ₹0.41 invoice came back with total 0, subtotal and tax
+  correct), so the app compares subtotal and tax strictly and allows 50 paise on the total.
+
+Still unconfirmed: item custom-field **write-back** (`PUT /items/{id}` with `custom_fields`), which changes a real
+item and was not tested.
 
 ## If Zoho POS is ever used directly
 
