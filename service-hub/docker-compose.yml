@@ -1,0 +1,49 @@
+# Production stack for a VPS: Postgres + app + Caddy (automatic HTTPS).
+# Copy .env.production.example to .env and fill it in, then:  docker compose up -d --build
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: servicehub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: servicehub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U servicehub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # not published to the internet: only the app container can reach it
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://servicehub:${POSTGRES_PASSWORD}@db:5432/servicehub
+      CORS_ORIGIN: https://${DOMAIN}
+    volumes:
+      - uploads:/data/uploads
+    expose: ["4000"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

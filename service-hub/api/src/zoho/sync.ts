@@ -25,7 +25,7 @@ export async function pullTaxes(api: ZohoApi, c: Queryable = pool) {
   return taxes.length;
 }
 
-export async function pullContacts(api: ZohoApi, type: 'customer' | 'vendor', c: Queryable = pool) {
+export async function pullContacts(api: ZohoApi, type: 'customer' | 'vendor', c: Queryable = pool, skipped: string[] = []) {
   const table = type === 'customer' ? 'customers' : 'vendors';
   let page = 1, n = 0;
   for (;;) {
@@ -33,6 +33,7 @@ export async function pullContacts(api: ZohoApi, type: 'customer' | 'vendor', c:
     for (const k of rows) {
       const phone = k.mobile || k.phone || null;
       const name = k.contact_name || k.company_name;
+      try {
       await c.query(
         `insert into ${table} (zoho_contact_id,name,phone,email,gstin,gst_treatment,place_of_supply,synced_at)
          values ($1,$2,$3,$4,$5,$6,$7,now())
@@ -41,6 +42,7 @@ export async function pullContacts(api: ZohoApi, type: 'customer' | 'vendor', c:
            synced_at=now(), updated_at=now()`,
         [k.contact_id, name, phone, k.email || null, k.gst_no || null, k.gst_treatment || null, k.place_of_contact || null]);
       n++;
+      } catch (e: any) { skipped.push(`${type} "${name}": ${e.message}`); }
     }
     if (!hasMore) break;
   }
@@ -65,13 +67,14 @@ export async function templateFromZoho(c: Queryable, w: ZohoItemWarranty): Promi
   return r.rows[0].id;
 }
 
-export async function pullItems(api: ZohoApi, c: Queryable = pool) {
+export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: string[] = []) {
   const taxByZoho = new Map<string, string>();
   (await c.query('select id, zoho_tax_id from tax_rates where zoho_tax_id is not null')).rows.forEach((r) => taxByZoho.set(r.zoho_tax_id, r.id));
   let page = 1, n = 0;
   for (;;) {
     const { rows, hasMore } = await api.listItems(page++);
     for (const z of rows) {
+      try {
       const warranty = warrantyFromZohoItem(z);
       const tplId = warranty ? await templateFromZoho(c, warranty) : null;
       const track = z.track_serial_number ? 'serial' : z.track_batch_number ? 'batch' : 'none';
@@ -91,6 +94,10 @@ export async function pullItems(api: ZohoApi, c: Queryable = pool) {
            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`, [...vals, tplId, track]);
       }
       n++;
+      } catch (e: any) {
+        // One bad record (e.g. a SKU already used by another item) must not stop the rest of the pull.
+        skipped.push(`item "${z.name}" (${z.sku || z.item_id}): ${e.detail ?? e.message}`);
+      }
     }
     if (!hasMore) break;
   }
@@ -212,12 +219,12 @@ export async function refreshInvoiceStatuses(api: ZohoApi, limit = 30) {
   return rows.length;
 }
 
-async function record(entity: string, fn: () => Promise<unknown>) {
+async function record(entity: string, fn: () => Promise<string | void>) {
   try {
-    await fn();
+    const warning = (await fn()) || null;   // a warning means "mostly worked": show it, but count as synced
     await pool.query(
-      `insert into zoho_sync_state (entity,last_synced_at,last_error) values ($1,now(),null)
-       on conflict (entity) do update set last_synced_at=now(), last_error=null`, [entity]);
+      `insert into zoho_sync_state (entity,last_synced_at,last_error) values ($1,now(),$2)
+       on conflict (entity) do update set last_synced_at=now(), last_error=$2`, [entity, warning ? warning.slice(0, 500) : null]);
   } catch (e: any) {
     await pool.query(
       `insert into zoho_sync_state (entity,last_error) values ($1,$2)
@@ -229,10 +236,12 @@ async function record(entity: string, fn: () => Promise<unknown>) {
 /** One full cycle. Push first so an app-side edit is not overwritten by an older Zoho value on pull. */
 export async function runSyncCycle(api: ZohoApi) {
   const pushed = await processOutbox(api);
-  await record('taxes', () => pullTaxes(api));
-  await record('customers', () => pullContacts(api, 'customer'));
-  await record('vendors', () => pullContacts(api, 'vendor'));
-  await record('items', () => pullItems(api));
-  await record('invoice_status', () => refreshInvoiceStatuses(api));
+  await record('taxes', async () => { await pullTaxes(api); });
+  const skippedWarning = (what: string, skipped: string[]) =>
+    skipped.length ? `${skipped.length} ${what} skipped — ${skipped.slice(0, 3).join('; ')}${skipped.length > 3 ? '…' : ''}` : undefined;
+  await record('customers', async () => { const s: string[] = []; await pullContacts(api, 'customer', pool, s); return skippedWarning('customer(s)', s); });
+  await record('vendors', async () => { const s: string[] = []; await pullContacts(api, 'vendor', pool, s); return skippedWarning('vendor(s)', s); });
+  await record('items', async () => { const s: string[] = []; await pullItems(api, pool, s); return skippedWarning('item(s)', s); });
+  await record('invoice_status', async () => { await refreshInvoiceStatuses(api); });
   return pushed;
 }

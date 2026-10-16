@@ -36,14 +36,11 @@ export async function onHand(
   return rows[0].q;
 }
 
-let cachedDefault: string | null = null;
+/** The store that receives and issues stock unless a line names another location. */
 export async function defaultLocationId(c: Queryable): Promise<string> {
-  if (cachedDefault) return cachedDefault;
   const { rows } = await c.query<{ id: string }>(
     `select id from locations where active and kind='store' order by name limit 1`,
   );
-  if (!rows[0]) throw new Error('No store location configured');
-  cachedDefault = rows[0].id;
-  return cachedDefault;
+  if (!rows[0]) throw new Error('No active store location configured');
+  return rows[0].id;
 }
-export const resetLocationCache = () => { cachedDefault = null; };

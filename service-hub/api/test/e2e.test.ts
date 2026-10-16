@@ -5,7 +5,7 @@ import { migrate } from '../src/migrate.js';
 import { seedBase } from '../src/seed.js';
 import { buildApp } from '../src/server.js';
 import type { ZohoApi } from '../src/zoho/client.js';
-import { processOutbox } from '../src/zoho/sync.js';
+import { processOutbox, pullContacts, pullItems, pullTaxes } from '../src/zoho/sync.js';
 import { addMonths, endDate } from '../src/lib/warranty.js';
 import { today } from '../src/lib/jobs.js';
 import { randomUUID } from 'node:crypto';
@@ -344,6 +344,46 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     expect(di.total).toBe(1180);
     expect((await call('POST', `/api/amc/visits/${visit.id}/invoice`, tok.accountant)).status).toBe(409); // not twice
     expect((await call('POST', `/api/amc/visits/${c2.visits[1].id}/invoice`, tok.accountant)).status).toBe(409); // not completed
+  });
+
+  it('pulls taxes, contacts and items from Zoho, turning warranty custom fields into terms; re-pull is idempotent', async () => {
+    const api = Object.assign(new FakeZoho(), {
+      listTaxes: async () => [{ tax_id: 'ZT9', tax_name: 'Zoho tax A', tax_percentage: 12, tax_type: 'tax' }, { tax_id: 'ZT8', tax_name: 'Old tax', tax_percentage: 5, is_inactive: true }],
+      listContacts: async (type: string) => ({ rows: [{ contact_id: `${type}-1`, contact_name: `Zoho ${type}`, mobile: '9111111111', gst_treatment: 'business_gst', place_of_contact: 'KL' }], hasMore: false }),
+      listItems: async () => ({ hasMore: false, rows: [
+        { item_id: 'ZI-A', sku: 'ZA', name: 'Zoho Item A', rate: 500, tax_id: 'ZT9', hsn_or_sac: '8501', product_type: 'goods', track_serial_number: true,
+          custom_field_hash: { cf_warranty_parts_months: '18', cf_warranty_labour_months: '6', cf_warranty_terms: 'From Zoho' } },
+        { item_id: 'ZI-B', sku: 'ZB', name: 'Zoho Service', rate: 300, product_type: 'service', custom_field_hash: { cf_warranty_template: 'T12' } },
+        { item_id: 'ZI-SEAL', sku: 'SEAL', name: 'Seal kit (conflicting SKU)', rate: 110, status: 'active' },   // SKU already belongs to another linked item
+        { item_id: 'ZI-ADOPT', sku: 'adopt-me', name: 'Adopted from Zoho', rate: 75 },                          // matches an unlinked app item by SKU (case-insensitive)
+      ] }),
+    });
+    expect(await pullTaxes(api)).toBe(2);
+    expect(await pullContacts(api, 'customer')).toBe(1);
+    expect(await pullContacts(api, 'vendor')).toBe(1);
+    await pool.query(`insert into items (sku,name,track_mode,rate) values ('ADOPT-ME','Local item','batch',1)`);
+    const skipped: string[] = [];
+    expect(await pullItems(api, pool, skipped)).toBe(3);   // one bad record does not stop the others
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatch(/Seal kit \(conflicting SKU\).*SEAL/);
+    expect(await pullItems(api, pool, [])).toBe(3);        // re-pull changes nothing
+
+    const q = async (sql: string, p: any[] = []) => (await pool.query(sql, p)).rows;
+    expect((await q(`select percentage, active from tax_rates where zoho_tax_id='ZT9'`))[0]).toEqual({ percentage: 12, active: true });
+    expect((await q(`select active from tax_rates where zoho_tax_id='ZT8'`))[0].active).toBe(false);
+    expect((await q(`select count(*)::int n from customers where zoho_contact_id='customer-1'`))[0].n).toBe(1);
+    const a = (await q(`select i.track_mode, i.hsn_code, i.rate, t.parts_months, t.labour_months, t.terms_text, tx.percentage from items i
+                          join warranty_templates t on t.id=i.warranty_template_id join tax_rates tx on tx.id=i.tax_id where i.zoho_item_id='ZI-A'`))[0];
+    expect(a).toMatchObject({ track_mode: 'serial', hsn_code: '8501', rate: 500, parts_months: 18, labour_months: 6, terms_text: 'From Zoho', percentage: 12 });
+    expect((await q(`select count(*)::int n from warranty_templates where code like 'ZOHO-%'`))[0].n).toBe(1); // not duplicated on re-pull
+    const b = (await q(`select t.code, i.is_service from items i join warranty_templates t on t.id=i.warranty_template_id where i.zoho_item_id='ZI-B'`))[0];
+    expect(b).toEqual({ code: 'T12', is_service: true }); // matched the existing template by code
+    // an unlinked app item with the same SKU is adopted (not duplicated) and keeps its local tracking mode
+    const adopted = await q(`select zoho_item_id, rate, track_mode from items where lower(sku)='adopt-me'`);
+    expect(adopted).toHaveLength(1);
+    expect(adopted[0]).toMatchObject({ zoho_item_id: 'ZI-ADOPT', rate: 75, track_mode: 'batch' });
+    // the conflicting record left the existing linked item untouched
+    expect((await q(`select zoho_item_id, rate from items where sku='SEAL'`))[0]).toEqual({ zoho_item_id: 'Z-SEAL', rate: 100 });
   });
 
   it('dashboard and reports respond', async () => {
