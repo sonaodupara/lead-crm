@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { changedSince } from '../src/zoho/sync.js';
 import { buildBillPayload, buildInvoicePayload, customFields, MappingError, parseCustomFieldIds, pickZohoTax, warrantyFromZohoItem } from '../src/zoho/mapper.js';
 
 const ids = { 'invoice.cf_warranty_start': 'F1', 'invoice.cf_warranty_terms': 'F2', 'invoice.cf_app_ref': 'F4' };
@@ -93,5 +94,16 @@ describe('Zoho POS specifics', () => {
     expect((buildBillPayload(bill, {}, { pos: true }) as any).due_date).toBe('2026-10-01');
     expect((buildBillPayload({ ...bill, bill: { ...bill.bill, due_date: '2026-11-01' } }, {}, { pos: true }) as any).due_date).toBe('2026-11-01');
     expect(Object.keys(buildBillPayload(bill, {}))).not.toContain('due_date');
+  });
+});
+
+describe('deciding when to re-read an item from Zoho', () => {
+  it('re-reads new or changed items, skips unchanged ones, and copes with Zoho\'s +0530 offsets', () => {
+    expect(changedSince(null, '2026-10-07T15:49:27+0530')).toBe(true);                       // never seen
+    expect(changedSince(new Date('2026-10-08T00:00:00Z'), '2026-10-07T15:49:27+0530')).toBe(false);   // synced after the change
+    expect(changedSince(new Date('2026-10-07T09:00:00Z'), '2026-10-07T15:49:27+0530')).toBe(true);    // 10:19Z change is after 09:00Z sync
+    expect(changedSince(new Date('2026-10-07T10:30:00Z'), '2026-10-07T15:49:27+0530')).toBe(false);
+    expect(changedSince(new Date(), undefined)).toBe(true);                                   // no timestamp: be safe
+    expect(changedSince(new Date(), 'garbage')).toBe(true);
   });
 });

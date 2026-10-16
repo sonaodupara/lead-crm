@@ -67,7 +67,7 @@ export class ZohoClient implements ZohoApi {
     return { rows: pos ? rows.filter((r) => !r.contact_type || r.contact_type === type) : rows, hasMore: Boolean(j.page_context?.has_more_page) };
   }
   async listItems(page: number) {
-    const j = await this.req('GET', '/items', { query: { page, per_page: 200, ...(config.ZOHO_PRODUCT === 'pos' ? { filter_by: 'Status.All' } : {}) } });
+    const j = await this.req('GET', '/items', { query: { page, per_page: 200, filter_by: 'Status.All' } });   // include inactive so deactivations reach the app
     return { rows: j.items ?? [], hasMore: Boolean(j.page_context?.has_more_page) };
   }
   async getItem(id: string) { return (await this.req('GET', `/items/${id}`)).item; }

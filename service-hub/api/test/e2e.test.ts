@@ -347,7 +347,10 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
   });
 
   it('pulls taxes, contacts and items from Zoho, turning warranty custom fields into terms; re-pull is idempotent', async () => {
+    const detailCalls: string[] = [];
     const api = Object.assign(new FakeZoho(), {
+      // Zoho's item list leaves out custom fields; the item's own record has them
+      getItem: async (id: string) => { detailCalls.push(id); return id === 'ZI-DETAIL' ? { custom_field_hash: { cf_warranty_template: 'T12', cf_warranty_terms: 'From item record' } } : {}; },
       listTaxes: async () => [{ tax_id: 'ZT9', tax_name: 'Zoho tax A', tax_percentage: 12, tax_type: 'tax' }, { tax_id: 'ZT8', tax_name: 'Old tax', tax_percentage: 5, is_inactive: true },
         { tax_id: 'ZG18', tax_name: 'GST18', tax_percentage: 18, tax_type: 'tax_group', tax_specification: 'intra' },
         { tax_id: 'ZI18', tax_name: 'IGST18', tax_percentage: 18, tax_type: 'tax', tax_specification: 'inter', tax_specific_type: 'igst' }],
@@ -358,6 +361,7 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
         { item_id: 'ZI-B', sku: 'ZB', name: 'Zoho Service', rate: 300, product_type: 'service', custom_field_hash: { cf_warranty_template: 'T12' } },
         { item_id: 'ZI-SEAL', sku: 'SEAL', name: 'Seal kit (conflicting SKU)', rate: 110, status: 'active' },   // SKU already belongs to another linked item
         { item_id: 'ZI-ADOPT', sku: 'adopt-me', name: 'Adopted from Zoho', rate: 75 },                          // matches an unlinked app item by SKU (case-insensitive)
+        { item_id: 'ZI-DETAIL', sku: 'DET', name: 'Warranty only on detail', rate: 10, last_modified_time: '2020-01-01T10:00:00+0530' },
         // shaped like a Zoho POS item: empty SKU, no top-level tax_id, separate GST/IGST preferences, inactive status
         { item_id: 'ZI-POS', sku: '', part_number: 'PN-77', name: 'POS style item', rate: 2880, tax_id: '', status: 'inactive', product_type: 'goods', hsn_or_sac: '90283010',
           track_inventory: true, track_serial_number: false, track_batch_number: false,
@@ -369,10 +373,11 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     expect(await pullContacts(api, 'vendor')).toBe(1);
     await pool.query(`insert into items (sku,name,track_mode,rate) values ('ADOPT-ME','Local item','batch',1)`);
     const skipped: string[] = [];
-    expect(await pullItems(api, pool, skipped)).toBe(4);   // one bad record does not stop the others
+    expect(await pullItems(api, pool, skipped)).toBe(5);   // one bad record does not stop the others
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toMatch(/Seal kit \(conflicting SKU\).*SEAL/);
-    expect(await pullItems(api, pool, [])).toBe(4);        // re-pull changes nothing
+    expect(await pullItems(api, pool, [])).toBe(5);        // re-pull changes nothing
+    expect(detailCalls.filter((id) => id === 'ZI-DETAIL')).toHaveLength(1);   // read once; unchanged on the second pull
 
     const q = async (sql: string, p: any[] = []) => (await pool.query(sql, p)).rows;
     expect((await q(`select percentage, active from tax_rates where zoho_tax_id='ZT9'`))[0]).toEqual({ percentage: 12, active: true });
@@ -384,6 +389,8 @@ describe.skipIf(!run)('Service Hub end-to-end', () => {
     expect((await q(`select count(*)::int n from warranty_templates where code like 'ZOHO-%'`))[0].n).toBe(1); // not duplicated on re-pull
     const b = (await q(`select t.code, i.is_service from items i join warranty_templates t on t.id=i.warranty_template_id where i.zoho_item_id='ZI-B'`))[0];
     expect(b).toEqual({ code: 'T12', is_service: true }); // matched the existing template by code
+    const det = (await q(`select t.code from items i join warranty_templates t on t.id=i.warranty_template_id where i.zoho_item_id='ZI-DETAIL'`))[0];
+    expect(det).toEqual({ code: 'T12' });   // warranty came from the item's detail record, not the list
     const pos = (await q(`select i.sku, i.active, i.zoho_tax_intra, i.zoho_tax_inter, tx.name as preview_tax, tx.percentage from items i left join tax_rates tx on tx.id=i.tax_id where i.zoho_item_id='ZI-POS'`))[0];
     expect(pos).toEqual({ sku: 'PN-77', active: false, zoho_tax_intra: 'ZG18', zoho_tax_inter: 'ZI18', preview_tax: 'GST18', percentage: 18 });
     expect((await q(`select tax_specification from tax_rates where zoho_tax_id='ZI18'`))[0].tax_specification).toBe('inter');

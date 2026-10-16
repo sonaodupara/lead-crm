@@ -67,7 +67,17 @@ export async function templateFromZoho(c: Queryable, w: ZohoItemWarranty): Promi
   return r.rows[0].id;
 }
 
+const hasCustomFields = (z: any) => Boolean(z.custom_field_hash || z.custom_fields?.length);
+
+/** Zoho writes offsets like +0530; make that parseable, then compare with when we last synced the item. */
+export function changedSince(syncedAt: Date | string | null | undefined, zohoModified: string | null | undefined): boolean {
+  if (!syncedAt || !zohoModified) return true;
+  const modified = new Date(zohoModified.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).getTime();
+  return Number.isNaN(modified) || modified > new Date(syncedAt).getTime();
+}
+
 export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: string[] = []) {
+  const fieldsConfigured = Object.keys(parseCustomFieldIds(config.ZOHO_CUSTOM_FIELD_IDS)).some((k) => k.startsWith('item.'));
   const taxByZoho = new Map<string, string>();
   (await c.query('select id, zoho_tax_id from tax_rates where zoho_tax_id is not null')).rows.forEach((r) => taxByZoho.set(r.zoho_tax_id, r.id));
   let page = 1, n = 0;
@@ -75,7 +85,18 @@ export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: stri
     const { rows, hasMore } = await api.listItems(page++);
     for (const z of rows) {
       try {
-      const warranty = warrantyFromZohoItem(z);
+      // POS items often have no SKU; fall back to the part number, then Zoho's own id so the record is still unique.
+      const sku = z.sku || z.part_number || z.item_id;
+      const existing = (await c.query(
+        `select id, synced_at from items where zoho_item_id=$1 or (zoho_item_id is null and lower(sku)=lower($2)) limit 1`,
+        [z.item_id, sku])).rows[0];
+      // Zoho's item *list* leaves out custom fields. When warranty fields are configured, read the item's own record,
+      // but only for items that are new or changed since we last saw them, to keep API calls low.
+      let detail = z;
+      if (fieldsConfigured && !hasCustomFields(z) && changedSince(existing?.synced_at, z.last_modified_time)) {
+        try { detail = (await api.getItem(z.item_id)) ?? z; } catch (e: any) { skipped.push(`item "${z.name}": could not read warranty fields (${e.message})`); }
+      }
+      const warranty = warrantyFromZohoItem(detail);
       const tplId = warranty ? await templateFromZoho(c, warranty) : null;
       const track = z.track_serial_number ? 'serial' : z.track_batch_number ? 'batch' : 'none';
       // Zoho POS gives each item a GST (intra-state) and an IGST (inter-state) tax; Books gives one tax_id.
@@ -83,11 +104,6 @@ export async function pullItems(api: ZohoApi, c: Queryable = pool, skipped: stri
       const intra: string | null = prefs.find((p) => p.tax_specification === 'intra')?.tax_id ?? z.tax_id ?? null;
       const inter: string | null = prefs.find((p) => p.tax_specification === 'inter')?.tax_id ?? null;
       const previewTax = (intra && taxByZoho.get(intra)) || (inter && taxByZoho.get(inter)) || null;
-      // POS items often have no SKU; fall back to the part number, then Zoho's own id so the record is still unique.
-      const sku = z.sku || z.part_number || z.item_id;
-      const existing = (await c.query(
-        `select id from items where zoho_item_id=$1 or (zoho_item_id is null and lower(sku)=lower($2)) limit 1`,
-        [z.item_id, sku])).rows[0];
       const vals = [z.item_id, sku, z.name, z.hsn_or_sac || null, z.unit || 'nos', z.rate ?? 0,
         z.purchase_rate ?? 0, previewTax, z.product_type === 'service', z.status !== 'inactive', intra, inter];
       if (existing) {
